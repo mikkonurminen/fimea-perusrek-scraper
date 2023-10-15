@@ -1,11 +1,12 @@
 #!/bin/bash
 
-echo "-------------------------------" >> run.log
+set -e
 
 current_date=$(date +%y-%m-%d)
 curl=$(which curl)
 iconv=$(which iconv)
 
+echo "-------------------------------" >> run.log
 mkdir -p ./temp
 
 # Tee backupit edellisestä ajosta
@@ -139,7 +140,7 @@ if [ "$(cmp --silent "$edellinen_saate" "$uusi_saate"; echo $?)" -eq 0 ]; then
     exit 0
 fi
 
-# Hae ajopvm uudesta saatteesta
+# Hae ajopvm uudesta saatteesta ja muuta formaatti
 ajopvm=$(
     awk '{
       for (i=1; i <= NF; i++)
@@ -153,9 +154,32 @@ if [ ! -n "$ajopvm" ]; then
     exit 1
 fi
 
-# TODO muuta ajopvm "+%y-%m-%d"
+# Muuta ajopvm formaatti "%y-%m-%d" ja poista mahdollinen whitespace
+ajopvm=$(echo $ajopvm | sed '/^$/d;s/[[:blank:]]//g')
+kk="$(cut -d'.' -f2 <<<"$ajopvm")"
+paiva="$(cut -d'.' -f1 <<<"$ajopvm")"
+vuosi="$(cut -d'.' -f3 <<<"$ajopvm")"
 
-# TODO loop ja funktio?
+if [ "$paiva" -lt 1 ] ||  [ "$paiva" -gt 31 ]; then
+    echo "$current_date Virhe: ajopvm paiva-muuttuja < 1 tai > 31. Tarkista saate.txt" >> run.log
+    exit 1
+fi
+if [ "$kk" -lt 1 ] || [ "$kk" -gt 12 ]; then
+    echo "$current_date Virhe: ajopvm kuukausi-muuttuja < 1 tai > 12. Tarkista saate.txt." >> run.log
+    exit 1
+fi
+if [ "${#vuosi}" -ne 4 ]; then
+    echo "$current_date Virhe: ajopvm vuosi-muuttujassa. Tarkista saate.txt." >> run.log
+    exit 1
+fi
+
+# Lisää nolla eteen jos luku < 10
+[ "${#paiva}" -lt 2 ] && paiva="0$paiva"
+[ "${#kk}" -lt 2 ] && kk="0$kk"
+
+ajopvm="$vuosi-$kk-$paiva"
+
+# TODO loop ja funktio? Esim. sort_var="$-k2,2 -k1,1" && sort -t';' $sort_var -o output.txt
 # Ota talteen uudet rivit
 echo "$current_date Otetaan talteen uudet uniikit rivit atc..." >> run.log
 uniq_atc=$(cat "$edellinen_atc" "$uusi_atc" | sort | uniq -u)
