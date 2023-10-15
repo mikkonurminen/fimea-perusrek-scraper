@@ -1,0 +1,5 @@
+*.log
+backup/
+data/
+temp/
+edellinen_ajo/
