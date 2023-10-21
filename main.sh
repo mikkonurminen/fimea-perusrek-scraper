@@ -24,10 +24,20 @@ if [ -d ./data ] && [ -f ./data/tehdyt_ajot.txt ]; then
     cp -r ./data/* ./backup/data/
 fi
 
+echo "$current_date curl fimea.fi..." >> run.log
+#curl -Sso ./temp/fimea.html https://fimea.fi/laakehaut_ja_luettelot/perusrekisteri 2>>run.log
+
+function extract_link() {
+    echo "$current_date Haetaan linkki $1..." >> run.log
+    local link=$(cat ./temp/fimea.html | grep -w "${1}.txt" | sed -e 's/.*href=\"\(.*\)\">.*/\1/')
+    echo "https://fimea.fi${link}"
+}
+
 function dl_file() {
-    echo "Ladataan $1..." >> run.log
-    # curl -Sso ./temp/$1.txt https://www.fimea.fi/documents/160140/1128399/$1.txt 2>>run.log
-    # 2>>run.log
+    echo "$current_date Ladataan $1..." >> run.log
+    local link=$(extract_link ${1})
+    echo "$current_date curl $link" >> run.log
+    curl -Sso ./temp/$1.txt $link 2>>run.log
     if [ $? -ne 0 ]; then
         echo "Url virhe latauksessa $file.txt" >> run.log
         echo 1 && return 1
@@ -75,7 +85,7 @@ function compare_line_count() {
 # Lataa filet
 echo "$current_date Ladataan tiedostot Fimeasta..." >> run.log
 # file=("saate" "atc" "laakemuoto" "laakeaine" "maaraamisehto" "maaraaikaisetmaaraamisehto" "sailytysastia" "pakkaus_nolla" "pakkaus1" "pakkaus-m")
-filet=("atc" "saate")
+filet=("saate" "atc")
 len=${#filet[@]}
 i=$(echo 0)
 for file in "${filet[@]}"; do
@@ -93,9 +103,6 @@ for file in "${filet[@]}"; do
     i=$(($i + 1))
 done
 unset i len filet
-
-
-
 
 # TODO loop
 edellinen_saate=./edellinen_ajo/saate.txt
@@ -154,7 +161,7 @@ if [ ! -n "$ajopvm" ]; then
     exit 1
 fi
 
-# Muuta ajopvm formaatti "%y-%m-%d" ja poista mahdollinen whitespace
+# Poista mahdollinen whitespace ja tarkista numerot
 ajopvm=$(echo $ajopvm | sed '/^$/d;s/[[:blank:]]//g')
 kk="$(cut -d'.' -f2 <<<"$ajopvm")"
 paiva="$(cut -d'.' -f1 <<<"$ajopvm")"
