@@ -6,7 +6,6 @@ current_date=$(date +%y-%m-%d-%T)
 curl=$(which curl)
 iconv=$(which iconv)
 
-echo "-------------------------------" >> run.log
 mkdir -p ./temp
 
 # Tee backupit edellisestä ajosta
@@ -24,6 +23,7 @@ if [ -d ./data ] && [ -f ./data/tehdyt_ajot.txt ]; then
     cp -r ./data/* ./backup/data/
 fi
 
+echo "-------------------------------" >> run.log
 echo "$current_date curl fimea.fi..." >> run.log
 #curl -Sso ./temp/fimea.html https://fimea.fi/laakehaut_ja_luettelot/perusrekisteri 2>>run.log
 
@@ -37,7 +37,7 @@ function dl_file() {
     echo "$current_date Ladataan $1..." >> run.log
     local link=$(extract_link ${1})
     echo "$current_date curl $link" >> run.log
-    #curl -Sso ./temp/$1.txt $link 2>>run.log
+    curl -Sso ./temp/$1.txt $link 2>>run.log
     if [ $? -ne 0 ]; then
         echo "Url virhe latauksessa $file.txt" >> run.log
         echo 1 && return 1
