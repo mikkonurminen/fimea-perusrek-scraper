@@ -2,7 +2,7 @@
 
 set -e
 
-current_date=$(date +%y-%m-%d)
+current_date=$(date +%y-%m-%d-%T)
 curl=$(which curl)
 iconv=$(which iconv)
 
@@ -37,13 +37,13 @@ function dl_file() {
     echo "$current_date Ladataan $1..." >> run.log
     local link=$(extract_link ${1})
     echo "$current_date curl $link" >> run.log
-    curl -Sso ./temp/$1.txt $link 2>>run.log
+    #curl -Sso ./temp/$1.txt $link 2>>run.log
     if [ $? -ne 0 ]; then
         echo "Url virhe latauksessa $file.txt" >> run.log
         echo 1 && return 1
     fi
 
-    # Tarkista, että curl ladannut tiedoston, eikä html-sivua
+    # Tarkista, että 1) tiedosto ei ole tyhjä 2) curl on ladannut tiedoston eikä html-sivua
     local file=./temp/$1.txt
     wc_file=$(cat "$file" | wc -l)
     wc_file_html=$(cat "$file" | grep "DOCTYPE html" | wc -l)
@@ -70,10 +70,51 @@ function encoding_to_utf8() {
     fi
 }
 
+function hae_ajopvm() {
+    # Hae ajopvm uudesta saatteesta ja muuta formaatti
+    ajopvm=$(
+        awk '{
+      for (i=1; i <= NF; i++)
+        if (tolower($i) == "ajopvm:")
+          print $(i+1)
+        }' "$uusi_saate"
+    )
+
+    if [ ! -n "$ajopvm" ]; then
+        echo -e "$current_date Exit 1. Ajopvm ei löytynyt uudesta ajosta. Tarkista saate.txt\n" >> run.log
+        exit 1
+    fi
+
+    # Poista mahdollinen whitespace ja tarkista numerot
+    ajopvm=$(echo $ajopvm | sed '/^$/d;s/[[:blank:]]//g')
+    kk="$(cut -d'.' -f2 <<<"$ajopvm")"
+    paiva="$(cut -d'.' -f1 <<<"$ajopvm")"
+    vuosi="$(cut -d'.' -f3 <<<"$ajopvm")"
+
+    if [ "$paiva" -lt 1 ] ||  [ "$paiva" -gt 31 ]; then
+        echo "$current_date Virhe: ajopvm paiva-muuttuja < 1 tai > 31. Tarkista saate.txt" >> run.log
+        exit 1
+    fi
+    if [ "$kk" -lt 1 ] || [ "$kk" -gt 12 ]; then
+        echo "$current_date Virhe: ajopvm kuukausi-muuttuja < 1 tai > 12. Tarkista saate.txt." >> run.log
+        exit 1
+    fi
+    if [ "${#vuosi}" -ne 4 ]; then
+        echo "$current_date Virhe: ajopvm vuosi-muuttujassa. Tarkista saate.txt." >> run.log
+        exit 1
+    fi
+
+    # Lisää nolla eteen jos luku < 10
+    [ "${#paiva}" -lt 2 ] && paiva="0$paiva"
+    [ "${#kk}" -lt 2 ] && kk="0$kk"
+
+    ajopvm="$vuosi-$kk-$paiva"
+}
+
 function compare_line_count() {
-    local lc_uusi_atc=$(cat ./temp/$1_uusi.txt | wc -l)
-    local lc_vanha_atc=$(cat ./data/$1.txt | wc -l)
-    if [ $lc_uusi_atc -ge $lc_vanha_atc ]; then
+    local lc_uusi=$(cat ./temp/$1_uusi.txt | wc -l)
+    local lc_vanha=$(cat ./data/$1.txt | wc -l)
+    if [ $lc_uusi -ge $lc_vanha ]; then
         # cp ./temp/$1_uusi.txt ./data/$1.txt
         echo "$current_date ./data/$1.txt päivitetty." >> run.log
     else
@@ -104,31 +145,33 @@ for file in "${filet[@]}"; do
 done
 unset i len filet
 
-# TODO loop
-edellinen_saate=./edellinen_ajo/saate.txt
-edellinen_atc=./edellinen_ajo/atc.txt
+# $ajopvm muuttuja
+hae_ajopvm
 
 # Tarkista, onko varmasti ensimmäinen kerta kun tiedostot haetaan
-if [ ! -f "$edellinen_saate" ] || [ ! -f ./data/tehdyt_ajot.txt ] || [ ! -f ./data/atc.txt ]; then
+if [ ! -f ./edellinen_ajo/saate.txt ] && [ ! -f ./data/tehdyt_ajot.txt ]; then
     echo "$current_date Edellisen ajon saatetta ei löytynyt. Tallennetaan datat uutena." >> run.log
-
-    encoding_to_utf8 $uusi_saate
-    encoding_to_utf8 $uusi_atc
 
     mkdir -p ./data
     mkdir -p ./edellinen_ajo
 
-    if [ ! -f ./data/tehdyt_ajot.txt ]; then
-        cp $uusi_saate ./data/tehdyt_ajot.txt
-        cp $uusi_saate ./edellinen_ajo/saate.txt
-        echo "$current_date $uusi_saate kopiotu ./data ./edellinen_ajo" >> run.log
-    fi
+    filet=("atc")
+    for file in "${filet[@]}"; do
+        # Lisää ajopvm sarake ja arvot
+        { head -1 ./temp/$file.txt \
+            | awk '{ printf "AJOPVM;"; print }'; sed -e 1d ./temp/$file.txt | awk -v ajopvm="$ajopvm" '{ printf ajopvm";"; print }' ; } \
+            | cat > ./temp/$file_temp.txt \
+            && mv ./temp/$file_temp.txt ./temp/$file.txt
 
-    if [ ! -f ./data/atc.txt ]; then
-        cp $uusi_atc ./data/atc.txt
-        cp $uusi_atc ./edellinen_ajo/atc.txt
-        echo "$current_date $uusi_atc kopiotu ./data ./edellinen_ajo" >> run.log
-    fi
+        cp ./temp/$file.txt ./data/$file.txt
+        cp ./temp/$file.txt ./edellinen_ajo/$file.txt
+
+        eval echo "$current_date \$uusi_${atc} kopiotu ./data ./edellinen_ajo" >> run.log
+    done
+
+    cp $uusi_saate ./data/tehdyt_ajot.txt
+    cp $uusi_saate ./edellinen_ajo/saate.txt
+    echo "$current_date $uusi_saate kopiotu ./data ./edellinen_ajo" >> run.log
 
     # Tee backupit
     echo "$current_date Tehdään backupit ./backup" >> run.log
@@ -137,54 +180,21 @@ if [ ! -f "$edellinen_saate" ] || [ ! -f ./data/tehdyt_ajot.txt ] || [ ! -f ./da
     cp -r ./data/* ./backup/data/
     cp -r ./temp/* ./backup/temp/
 
+    # rm -rf ./temp
+
     echo -e "$current_date Datat tallennettu uutena.\n" >> run.log
     exit 0
 fi
+
+# TODO loop
+edellinen_saate=./edellinen_ajo/saate.txt
+edellinen_atc=./edellinen_ajo/atc.txt
 
 # Tarkista, onko saate identtinen edellisen kanssa
 if [ "$(cmp --silent "$edellinen_saate" "$uusi_saate"; echo $?)" -eq 0 ]; then
     echo -e "$current_date Ei päivitystä edelliseen Fimean ajoon.\n" >> run.log
     exit 0
 fi
-
-# Hae ajopvm uudesta saatteesta ja muuta formaatti
-ajopvm=$(
-    awk '{
-      for (i=1; i <= NF; i++)
-        if (tolower($i) == "ajopvm:")
-          print $(i+1)
-    }' "$uusi_saate"
-)
-
-if [ ! -n "$ajopvm" ]; then
-    echo -e "$current_date Exit 1. Ajopvm ei löytynyt uudesta ajosta. Tarkista saate.txt\n" >> run.log
-    exit 1
-fi
-
-# Poista mahdollinen whitespace ja tarkista numerot
-ajopvm=$(echo $ajopvm | sed '/^$/d;s/[[:blank:]]//g')
-kk="$(cut -d'.' -f2 <<<"$ajopvm")"
-paiva="$(cut -d'.' -f1 <<<"$ajopvm")"
-vuosi="$(cut -d'.' -f3 <<<"$ajopvm")"
-
-if [ "$paiva" -lt 1 ] ||  [ "$paiva" -gt 31 ]; then
-    echo "$current_date Virhe: ajopvm paiva-muuttuja < 1 tai > 31. Tarkista saate.txt" >> run.log
-    exit 1
-fi
-if [ "$kk" -lt 1 ] || [ "$kk" -gt 12 ]; then
-    echo "$current_date Virhe: ajopvm kuukausi-muuttuja < 1 tai > 12. Tarkista saate.txt." >> run.log
-    exit 1
-fi
-if [ "${#vuosi}" -ne 4 ]; then
-    echo "$current_date Virhe: ajopvm vuosi-muuttujassa. Tarkista saate.txt." >> run.log
-    exit 1
-fi
-
-# Lisää nolla eteen jos luku < 10
-[ "${#paiva}" -lt 2 ] && paiva="0$paiva"
-[ "${#kk}" -lt 2 ] && kk="0$kk"
-
-ajopvm="$vuosi-$kk-$paiva"
 
 # TODO loop ja funktio? Esim. sort_var="$-k2,2 -k1,1" && sort -t';' $sort_var -o output.txt
 # Ota talteen uudet rivit
@@ -193,7 +203,7 @@ uniq_atc=$(cat "$edellinen_atc" "$uusi_atc" | sort | uniq -u)
 
 lc_atc=$(echo "$uniq_atc" | wc -l)
 if [ $lc_atc -gt 0 ]; then
-    # TODO lisää ajopvm sarake sekä arvot tiedostoihin
+    # TODO lisää ajopvm arvot tiedostoihin
     echo "$uniq_atc" > ./edellinen_ajo/atc_uudet_rivit.txt
 
     # 1) Ota header pois; 2) yhdistä uniikit rivit; 3) sort; 4) yhdistä header ja sortatut rivit
@@ -201,7 +211,7 @@ if [ $lc_atc -gt 0 ]; then
     { sed -e 1d ./data/atc.txt; echo "$uniq_atc"; } \
         | sort -t';' -k2 -o ./temp/atc_temp.txt \
         && head -1 ./data/atc.txt \
-        | cat - ./temp/atc_temp.txt > ./temp/atc_uusi.txt
+        | cat - ./temp/atc_temp.txt > ./data/atc.txt
 
     # Tarkista että päivitetyssä tiedostossa vähintään saman verran rivejä kuin vanhassa
     compare_line_count "atc"
@@ -221,4 +231,4 @@ cat "$uusi_saate" >> ./data/tehdyt_ajot.txt
 cp -r ./temp/* ./backup/temp/
 
 echo "Script ajettu $(date +%y-%m-%d' '%T)" > ./edellinen_ajo/skripti_ajettu_pvm.txt
-echo -e "$curent_date Script ajo valmis.\n" >> run.log
+echo -e "$current_date Script ajo valmis.\n" >> run.log
