@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -eu
 
 current_date=$(date +%y-%m-%d-%T)
 curl=$(which curl)
@@ -160,13 +160,13 @@ if [ ! -f ./edellinen_ajo/saate.txt ] && [ ! -f ./data/tehdyt_ajot.txt ]; then
         # Lisää ajopvm sarake ja arvot
         { head -1 ./temp/$file.txt \
             | awk '{ printf "AJOPVM;"; print }'; sed -e 1d ./temp/$file.txt | awk -v ajopvm="$ajopvm" '{ printf ajopvm";"; print }' ; } \
-            | cat > ./temp/$file_temp.txt \
-            && mv ./temp/$file_temp.txt ./temp/$file.txt
+            | cat > ./temp/${file}_temp.txt \
+            && mv ./temp/${file}_temp.txt ./temp/$file.txt
 
         cp ./temp/$file.txt ./data/$file.txt
         cp ./temp/$file.txt ./edellinen_ajo/$file.txt
 
-        eval echo "$current_date \$uusi_${atc} kopiotu ./data ./edellinen_ajo" >> run.log
+        eval echo "$current_date \$uusi_${file} kopiotu ./data ./edellinen_ajo" >> run.log
     done
 
     cp $uusi_saate ./data/tehdyt_ajot.txt
@@ -186,9 +186,13 @@ if [ ! -f ./edellinen_ajo/saate.txt ] && [ ! -f ./data/tehdyt_ajot.txt ]; then
     exit 0
 fi
 
-# TODO loop
-edellinen_saate=./edellinen_ajo/saate.txt
-edellinen_atc=./edellinen_ajo/atc.txt
+# Edellisen ajon tiedot
+filet=("saate" "atc")
+for file in "${filet[@]}"; do {
+        eval "edellinen_$file=./edellinen_ajo/$file.txt"
+    }
+done
+unset filet
 
 # Tarkista, onko saate identtinen edellisen kanssa
 if [ "$(cmp --silent "$edellinen_saate" "$uusi_saate"; echo $?)" -eq 0 ]; then
