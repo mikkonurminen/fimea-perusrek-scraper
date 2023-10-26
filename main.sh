@@ -11,6 +11,7 @@ mkdir -p ./temp
 # Tee backupit edellisestä ajosta
 mkdir -p ./backup/data ./backup/edellinen_ajo/
 
+echo "-------------------------------" >> run.log
 if [ -f ./run.log ]; then
     cp ./run.log ./backup/edellinen_ajo/run.log
 fi
@@ -23,7 +24,6 @@ if [ -d ./data ] && [ -f ./data/tehdyt_ajot.txt ]; then
     cp -r ./data/* ./backup/data/
 fi
 
-echo "-------------------------------" >> run.log
 echo "$current_date curl fimea.fi..." >> run.log
 #curl -Sso ./temp/fimea.html https://fimea.fi/laakehaut_ja_luettelot/perusrekisteri 2>>run.log
 
@@ -37,11 +37,11 @@ function dl_file() {
     echo "$current_date Ladataan $1..." >> run.log
     local link=$(extract_link ${1})
     echo "$current_date curl $link" >> run.log
-    curl -Sso ./temp/$1.txt $link 2>>run.log
-    if [ $? -ne 0 ]; then
-        echo "Url virhe latauksessa $file.txt" >> run.log
-        echo 1 && return 1
-    fi
+    # curl -Sso ./temp/$1.txt $link 2>>run.log
+    # if [ $? -ne 0 ]; then
+    #     echo "Url virhe latauksessa $file.txt" >> run.log
+    #     echo 1 && return 1
+    # fi
 
     # Tarkista, että 1) tiedosto ei ole tyhjä 2) curl on ladannut tiedoston eikä html-sivua
     local file=./temp/$1.txt
@@ -115,7 +115,7 @@ function compare_line_count() {
     local lc_uusi=$(cat ./temp/$1_uusi.txt | wc -l)
     local lc_vanha=$(cat ./data/$1.txt | wc -l)
     if [ $lc_uusi -ge $lc_vanha ]; then
-        # cp ./temp/$1_uusi.txt ./data/$1.txt
+        mv ./temp/$1_uusi.txt ./data/$1.txt
         echo "$current_date ./data/$1.txt päivitetty." >> run.log
     else
         # TODO Testaa tämä
@@ -186,7 +186,7 @@ if [ ! -f ./edellinen_ajo/saate.txt ] && [ ! -f ./data/tehdyt_ajot.txt ]; then
     exit 0
 fi
 
-# Edellisen ajon tiedot
+# Edellisen ajon tiedot muuttujiin
 filet=("saate" "atc")
 for file in "${filet[@]}"; do {
         eval "edellinen_$file=./edellinen_ajo/$file.txt"
@@ -203,30 +203,45 @@ fi
 # TODO loop ja funktio? Esim. sort_var="$-k2,2 -k1,1" && sort -t';' $sort_var -o output.txt
 # Ota talteen uudet rivit
 echo "$current_date Otetaan talteen uudet uniikit rivit atc..." >> run.log
-uniq_atc=$(cat "$edellinen_atc" "$uusi_atc" | sort | uniq -u)
+
+# Poista ajopvm edellisen ajon tiedostosta
+uniq_atc=$(
+    { cut --complement -d";" -f1 $edellinen_atc; cat "$uusi_atc"; } \
+        | sort | uniq -u
+)
 
 lc_atc=$(echo "$uniq_atc" | wc -l)
 if [ $lc_atc -gt 0 ]; then
-    # TODO lisää ajopvm arvot tiedostoihin
-    echo "$uniq_atc" > ./edellinen_ajo/atc_uudet_rivit.txt
+    # Lisää ajopvm arvot
+    uniq_atc=$(echo "$uniq_atc" | awk -v ajopvm="$ajopvm" '{ printf ajopvm";"; print }')
+
+    # Lisää myös ajopvm sarake
+    { head -1 ./temp/atc.txt \
+        | awk '{ printf "AJOPVM;"; print }'; sed -e 1d ./temp/atc.txt | awk -v ajopvm="$ajopvm" '{ printf ajopvm";"; print }' ; } \
+        | cat > ./temp/atc_temp.txt \
+        && mv ./temp/atc_temp.txt ./temp/atc.txt
 
     # 1) Ota header pois; 2) yhdistä uniikit rivit; 3) sort; 4) yhdistä header ja sortatut rivit
     echo "$current_date Lisätään uniikit rivit dataan..." >> run.log
     { sed -e 1d ./data/atc.txt; echo "$uniq_atc"; } \
-        | sort -t';' -k2 -o ./temp/atc_temp.txt \
+        | sort -t';' -k3,3 -k2,2 -o ./temp/atc_temp.txt \
         && head -1 ./data/atc.txt \
-        | cat - ./temp/atc_temp.txt > ./data/atc.txt
+        | cat - ./temp/atc_temp.txt > ./temp/atc_uusi.txt
 
-    # Tarkista että päivitetyssä tiedostossa vähintään saman verran rivejä kuin vanhassa
+    rm -f ./temp/atc_temp.txt
+
+    # Tarkista että päivitetyssä tiedostossa vähintään saman verran rivejä kuin vanhassa.
+    # Jos on, niin päivitä tiedosto.
     compare_line_count "atc"
 else
-    echo "$current_date atc.txt uusien uniikkien rivien määrä 0." >> run.log
+    echo "$current_date atc.txt uusien uniikkien rivien määrä 0. Ei tarvetta päivittää." >> run.log
 fi
 
 # Korvaa ./edellinen_ajo uudella ajolla
 echo "$current_date Korvataan ./edellinen_ajo uudella ajolla." >> run.log
 cp $uusi_saate ./edellinen_ajo/saate.txt
 cp $uusi_atc ./edellinen_ajo/atc.txt
+
 
 # Lisää saate tehtyihin ajoihin TODO pitäisikö siirtää myöhemmäksi
 cat "$uusi_saate" >> ./data/tehdyt_ajot.txt
