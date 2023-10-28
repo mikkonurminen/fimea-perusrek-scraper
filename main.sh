@@ -48,15 +48,16 @@ function dl_file() {
     wc_file=$(cat "$file" | wc -l)
     wc_file_html=$(cat "$file" | grep "DOCTYPE html" | wc -l)
     if [ $wc_file_html -gt 0 ] || [ $wc_file -eq 0 ] || [ ! -f $file ]; then
-        echo 1 && return 1
+        echo -e "$current_date Exit 1. Virhe ladattaessa $file.txt. Tarkista curl." >> run.log
+        # rm -rf ./temp
+        exit 1
     fi
 
     # Tarkista saatteen kohdalla vielä, että on vain yksi rivi
     if [ "$1" == "saate" ] && [ $wc_file -gt 1 ]; then
         echo -e "$current_date Exit 1. Virhe $file. Tarkista rivien määrä ja curl." >> run.log
-        echo 1 && return 1
+        exit 1
     fi
-    echo $file
 }
 
 function encoding_to_utf8() {
@@ -77,7 +78,7 @@ function hae_ajopvm() {
       for (i=1; i <= NF; i++)
         if (tolower($i) == "ajopvm:")
           print $(i+1)
-        }' "$uusi_saate"
+        }' ./temp/saate.txt
     )
 
     if [ ! -n "$ajopvm" ]; then
@@ -130,14 +131,8 @@ filet=("saate" "atc")
 len=${#filet[@]}
 i=$(echo 0)
 for file in "${filet[@]}"; do
-    eval "uusi_$file=$(dl_file $file)"
-    if [ ! -f "$(eval echo \$uusi_${file})" ]; then
-        echo -e "$current_date Exit 1. Virhe ladattaessa $file.txt. Tarkista curl." >> run.log
-        # rm -rf ./temp
-        exit 1
-    fi
-
-    encoding_to_utf8 "$(eval echo \$uusi_${file})"
+    dl_file $file
+    encoding_to_utf8 ./temp/$file.txt
 
     # Odota latauksien välillä
     [ $i -lt $(($len - 1)) ] && sleep 5
@@ -166,12 +161,12 @@ if [ ! -f ./edellinen_ajo/saate.txt ] && [ ! -f ./data/tehdyt_ajot.txt ]; then
         cp ./temp/$file.txt ./data/$file.txt
         cp ./temp/$file.txt ./edellinen_ajo/$file.txt
 
-        eval echo "$current_date \$uusi_${file} kopiotu ./data ./edellinen_ajo" >> run.log
+        echo "$current_date ./temp/$file kopiotu ./data ./edellinen_ajo" >> run.log
     done
 
-    cp $uusi_saate ./data/tehdyt_ajot.txt
-    cp $uusi_saate ./edellinen_ajo/saate.txt
-    echo "$current_date $uusi_saate kopiotu ./data ./edellinen_ajo" >> run.log
+    cp ./temp/saate.txt ./data/tehdyt_ajot.txt
+    cp ./temp/saate.txt ./edellinen_ajo/saate.txt
+    echo "$current_date ./temp/saate.txt kopiotu ./data ./edellinen_ajo" >> run.log
 
     # Tee backupit
     echo "$current_date Tehdään backupit ./backup" >> run.log
@@ -186,16 +181,8 @@ if [ ! -f ./edellinen_ajo/saate.txt ] && [ ! -f ./data/tehdyt_ajot.txt ]; then
     exit 0
 fi
 
-# Edellisen ajon tiedot muuttujiin
-filet=("saate" "atc")
-for file in "${filet[@]}"; do {
-        eval "edellinen_$file=./edellinen_ajo/$file.txt"
-    }
-done
-unset filet
-
 # Tarkista, onko saate identtinen edellisen kanssa
-if [ "$(cmp --silent "$edellinen_saate" "$uusi_saate"; echo $?)" -eq 0 ]; then
+if [ "$(cmp --silent ./edellinen_ajo/saate.txt ./temp/saate.txt; echo $?)" -eq 0 ]; then
     echo -e "$current_date Ei päivitystä edelliseen Fimean ajoon.\n" >> run.log
     exit 0
 fi
@@ -204,9 +191,9 @@ fi
 # Ota talteen uudet rivit
 echo "$current_date Otetaan talteen uudet uniikit rivit atc..." >> run.log
 
-# Poista ajopvm edellisen ajon tiedostosta
+# Poista ajopvm edellisen ajon tiedostosta ja ota uudet uniikit rivit
 uniq_atc=$(
-    { cut --complement -d";" -f1 $edellinen_atc; cat "$uusi_atc"; } \
+    { cut --complement -d";" -f1 ./edellinen_ajo/atc.txt; cat ./temp/atc.txt; } \
         | sort | uniq -u
 )
 
@@ -215,13 +202,15 @@ if [ $lc_atc -gt 0 ]; then
     # Lisää ajopvm arvot
     uniq_atc=$(echo "$uniq_atc" | awk -v ajopvm="$ajopvm" '{ printf ajopvm";"; print }')
 
-    # Lisää myös ajopvm sarake
+    # Lisää myös ajopvm sarake ja arvot
+    # TODO tee tästä funktio
     { head -1 ./temp/atc.txt \
         | awk '{ printf "AJOPVM;"; print }'; sed -e 1d ./temp/atc.txt | awk -v ajopvm="$ajopvm" '{ printf ajopvm";"; print }' ; } \
         | cat > ./temp/atc_temp.txt \
         && mv ./temp/atc_temp.txt ./temp/atc.txt
 
     # 1) Ota header pois; 2) yhdistä uniikit rivit; 3) sort; 4) yhdistä header ja sortatut rivit
+    # TODO tee tästä funktio
     echo "$current_date Lisätään uniikit rivit dataan..." >> run.log
     { sed -e 1d ./data/atc.txt; echo "$uniq_atc"; } \
         | sort -t';' -k3,3 -k2,2 -o ./temp/atc_temp.txt \
@@ -239,12 +228,12 @@ fi
 
 # Korvaa ./edellinen_ajo uudella ajolla
 echo "$current_date Korvataan ./edellinen_ajo uudella ajolla." >> run.log
-cp $uusi_saate ./edellinen_ajo/saate.txt
-cp $uusi_atc ./edellinen_ajo/atc.txt
+cp ./temp/saate.txt ./edellinen_ajo/saate.txt
+cp ./temp/atc.txt ./edellinen_ajo/atc.txt
 
 
 # Lisää saate tehtyihin ajoihin TODO pitäisikö siirtää myöhemmäksi
-cat "$uusi_saate" >> ./data/tehdyt_ajot.txt
+cat ./temp/saate.txt >> ./data/tehdyt_ajot.txt
 
 # Backup temp ennen tyhjennystä
 cp -r ./temp/* ./backup/temp/
