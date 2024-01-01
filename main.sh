@@ -2,8 +2,8 @@
 
 set -eu
 
-current_date=$(date +%y-%m-%d-%T)
-curl=$(which curl)
+current_date=$(date +%Y-%m-%d-%T)
+wget=$(which wget)
 iconv=$(which iconv)
 
 mkdir -p ./temp
@@ -24,8 +24,11 @@ if [ -d ./data ] && [ -f ./data/tehdyt_ajot.txt ]; then
     cp -r ./data/* ./backup/data/
 fi
 
-echo "$current_date curl fimea.fi..." >> run.log
-#curl -Sso ./temp/fimea.html https://fimea.fi/laakehaut_ja_luettelot/perusrekisteri 2>>run.log
+echo "$current_date wget fimea.fi..." >> run.log
+wget -nv -O ./temp/fimea.html \
+    --no-cache --no-cookies --header="Accept: text/html" \
+    --user-agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:21.0) Gecko/20100101 Firefox/21.0" \
+    https://fimea.fi/laakehaut_ja_luettelot/perusrekisteri 2>>run.log
 
 function extract_link() {
     echo "$current_date Haetaan linkki $1..." >> run.log
@@ -36,26 +39,31 @@ function extract_link() {
 function dl_file() {
     echo "$current_date Ladataan $1..." >> run.log
     local link=$(extract_link ${1})
-    echo "$current_date curl $link" >> run.log
-    # curl -Sso ./temp/$1.txt $link 2>>run.log
-    # if [ $? -ne 0 ]; then
-    #     echo "Url virhe latauksessa $file.txt" >> run.log
-    #     echo 1 && return 1
-    # fi
 
-    # Tarkista, että 1) tiedosto ei ole tyhjä 2) curl on ladannut tiedoston eikä html-sivua
+    echo "$current_date wget $link" >> run.log
+    wget -nv -O ./temp/$1.txt \
+        --no-cache --no-cookies --header="Accept: text/html" \
+        --user-agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:21.0) Gecko/20100101 Firefox/21.0" \
+        $link 2>>run.log
+
+    if [ $? -ne 0 ]; then
+        echo "Url virhe latauksessa $file.txt" >> run.log
+        echo 1 && return 1
+    fi
+
+    # Tarkista, että 1) tiedosto ei ole tyhjä 2) wget on ladannut tiedoston eikä html-sivua
     local file=./temp/$1.txt
     wc_file=$(cat "$file" | wc -l)
     wc_file_html=$(cat "$file" | grep "DOCTYPE html" | wc -l)
     if [ $wc_file_html -gt 0 ] || [ $wc_file -eq 0 ] || [ ! -f $file ]; then
-        echo -e "$current_date Exit 1. Virhe ladattaessa $file.txt. Tarkista curl." >> run.log
+        echo -e "$current_date Exit 1. Virhe ladattaessa $file.txt. Tarkista wget." >> run.log
         # rm -rf ./temp
         exit 1
     fi
 
     # Tarkista saatteen kohdalla vielä, että on vain yksi rivi
     if [ "$1" == "saate" ] && [ $wc_file -gt 1 ]; then
-        echo -e "$current_date Exit 1. Virhe $file. Tarkista rivien määrä ja curl." >> run.log
+        echo -e "$current_date Exit 1. Virhe $file. Tarkista rivien määrä ja wget." >> run.log
         exit 1
     fi
 }
@@ -143,7 +151,7 @@ unset i len filet
 # $ajopvm muuttuja
 hae_ajopvm
 
-# Tarkista, onko varmasti ensimmäinen kerta kun tiedostot haetaan
+# Tarkista, onko ensimmäinen kerta kun tiedostot haetaan. Jos ei, niin tallena datat uutena.
 if [ ! -f ./edellinen_ajo/saate.txt ] && [ ! -f ./data/tehdyt_ajot.txt ]; then
     echo "$current_date Edellisen ajon saatetta ei löytynyt. Tallennetaan datat uutena." >> run.log
 
@@ -192,15 +200,15 @@ fi
 echo "$current_date Otetaan talteen uudet uniikit rivit atc..." >> run.log
 
 # Poista ajopvm edellisen ajon tiedostosta ja ota uudet uniikit rivit
-uniq_atc=$(
+new_rows=$(
     { cut --complement -d";" -f1 ./edellinen_ajo/atc.txt; cat ./temp/atc.txt; } \
         | sort | uniq -u
 )
 
-lc_atc=$(echo "$uniq_atc" | wc -l)
-if [ $lc_atc -gt 0 ]; then
+lc_new_rows=$(echo "$new_rows" | wc -l)
+if [ $lc_new_rows -gt 0 ]; then
     # Lisää ajopvm arvot
-    uniq_atc=$(echo "$uniq_atc" | awk -v ajopvm="$ajopvm" '{ printf ajopvm";"; print }')
+    new_rows=$(echo "$new_rows" | awk -v ajopvm="$ajopvm" '{ printf ajopvm";"; print }')
 
     # Lisää myös ajopvm sarake ja arvot
     # TODO tee tästä funktio
@@ -212,7 +220,7 @@ if [ $lc_atc -gt 0 ]; then
     # 1) Ota header pois; 2) yhdistä uniikit rivit; 3) sort; 4) yhdistä header ja sortatut rivit
     # TODO tee tästä funktio
     echo "$current_date Lisätään uniikit rivit dataan..." >> run.log
-    { sed -e 1d ./data/atc.txt; echo "$uniq_atc"; } \
+    { sed -e 1d ./data/atc.txt; echo "$new_rows"; } \
         | sort -t';' -k3,3 -k2,2 -o ./temp/atc_temp.txt \
         && head -1 ./data/atc.txt \
         | cat - ./temp/atc_temp.txt > ./temp/atc_uusi.txt
